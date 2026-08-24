@@ -14,15 +14,21 @@ def load_and_process_data():
     with open(JSON_PATH, "r", encoding="utf-8") as f:
         raw_data = json.load(f)
 
-    # --- R18 と R-18 の統合処理 ---
-    if "R18" in raw_data:
-        r18_data = raw_data.pop("R18")  # R18を取り出して削除
-        if "R-18" in raw_data:
-            # R-18が存在する場合は各アイドルの件数を合算
-            for idol, count in r18_data.items():
-                raw_data["R-18"][idol] = raw_data["R-18"].get(idol, 0) + count
-        else:
-            raw_data["R-18"] = r18_data
+    # --- キーワードの統合処理（R18 → R-18, 胸 → おっぱい） ---
+    merge_pairs = [
+        ("R18", "R-18"),
+        ("胸", "おっぱい")
+    ]
+
+    for source_key, target_key in merge_pairs:
+        if source_key in raw_data:
+            source_data = raw_data.pop(source_key)  # 元キーを取り出して削除
+            if target_key in raw_data:
+                # 統合先に各アイドルの件数を合算
+                for idol, count in source_data.items():
+                    raw_data[target_key][idol] = raw_data[target_key].get(idol, 0) + count
+            else:
+                raw_data[target_key] = source_data
 
     processed = {}
     for word, idols in raw_data.items():
