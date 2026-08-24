@@ -1,11 +1,16 @@
 from flask import Flask, render_template_string, request
-import random
+import requests
+import os
 
 app = Flask(__name__)
 
+# Google Custom Search APIのキーとCX（環境変数から取得）
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+SEARCH_ENGINE_ID = os.environ.get("SEARCH_ENGINE_ID", "")
+
 IDOLS = [
     "花海 咲季", "月村 手毬", "藤田 ことね", "姫崎 莉波", "紫雲 清夏", "篠澤 広",
-    "葛城 リーリヤ", "倉本 千奈", "有村 麻央","十王 星南", "花海 佑芽"
+    "葛城 リーリヤ", "倉本 千奈", "有村 麻央", "十王 星南", "花海 佑芽"
 ]
 
 HTML_TEMPLATE = """
@@ -32,18 +37,24 @@ HTML_TEMPLATE = """
         .bar-label { display: flex; justify-content: space-between; font-size: 13px; font-weight: bold; }
         .bar-bg { background: #e2e8f0; border-radius: 4px; height: 20px; overflow: hidden; }
         .bar-fill { background: #0284c7; height: 100%; border-radius: 4px; }
+        .notice { font-size: 11px; color: #ef4444; margin-bottom: 12px; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>学園アイドルマスター 検索印象属性分析</h1>
-        <div class="caption">検索エンジンにおける「キャラ名 ＋ ワード」の検索ヒット数を可視化します。</div>
+        <div class="caption">Googleのリアルタイム検索ヒット数を集計中</div>
         
         <form class="search-box" method="GET" action="/">
             <label style="font-size: 13px; font-weight: bold; display: block; margin-bottom: 6px;">掛け合わせ検索ワードを入力</label>
             <input type="text" name="word" value="{{ word }}" onchange="this.form.submit()">
         </form>
 
+        {% if error %}
+        <div class="notice">※{{ error }}</div>
+        {% endif %}
+
+        {% if data %}
         <div class="top3-container">
             <div class="card"><div class="card-label">1位 ({{ word }})</div><div class="card-value">{{ data[0].name }}</div><div class="card-sub">{{ "{:,}".format(data[0].count) }} 件</div></div>
             <div class="card"><div class="card-label">2位</div><div class="card-value">{{ data[1].name }}</div><div class="card-sub">{{ "{:,}".format(data[1].count) }} 件</div></div>
@@ -58,24 +69,45 @@ HTML_TEMPLATE = """
             </div>
             {% endfor %}
         </div>
+        {% endif %}
     </div>
 </body>
 </html>
 """
 
+def get_real_search_count(query):
+    if not GOOGLE_API_KEY or not SEARCH_ENGINE_ID:
+        return 0
+    url = f"https://www.googleapis.com/customsearch/v1?key={GOOGLE_API_KEY}&cx={SEARCH_ENGINE_ID}&q={query}"
+    try:
+        res = requests.get(url).json()
+        total_results = res.get("searchInformation", {}).get("totalResults", "0")
+        return int(total_results)
+    except Exception:
+        return 0
+
 @app.route("/")
 def index():
     word = request.args.get("word", "かわいい")
-    random.seed(sum(ord(c) for c in word))
+    error = None
     
-    raw_data = [{"name": name, "count": random.randint(10000, 250000)} for name in IDOLS]
+    if not GOOGLE_API_KEY or not SEARCH_ENGINE_ID:
+        error = "Google APIの設定がまだ完了していません。"
+        raw_data = [{"name": name, "count": 0} for name in IDOLS]
+    else:
+        raw_data = []
+        for name in IDOLS:
+            query = f'"{name}" "{word}"'
+            count = get_real_search_count(query)
+            raw_data.append({"name": name, "count": count})
+
     sorted_data = sorted(raw_data, key=lambda x: x["count"], reverse=True)
+    max_count = sorted_data[0]["count"] if sorted_data and sorted_data[0]["count"] > 0 else 1
     
-    max_count = sorted_data[0]["count"] if sorted_data else 1
     for item in sorted_data:
-        item["percent"] = int((item["count"] / max_count) * 100)
+        item["percent"] = int((item["count"] / max_count) * 100) if max_count > 0 else 0
         
-    return render_template_string(HTML_TEMPLATE, word=word, data=sorted_data)
+    return render_template_string(HTML_TEMPLATE, word=word, data=sorted_data, error=error)
 
 if __name__ == "__main__":
     app.run()
