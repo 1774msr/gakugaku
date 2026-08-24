@@ -14,6 +14,16 @@ def load_and_process_data():
     with open(JSON_PATH, "r", encoding="utf-8") as f:
         raw_data = json.load(f)
 
+    # --- R18 と R-18 の統合処理 ---
+    if "R18" in raw_data:
+        r18_data = raw_data.pop("R18")  # R18を取り出して削除
+        if "R-18" in raw_data:
+            # R-18が存在する場合は各アイドルの件数を合算
+            for idol, count in r18_data.items():
+                raw_data["R-18"][idol] = raw_data["R-18"].get(idol, 0) + count
+        else:
+            raw_data["R-18"] = r18_data
+
     processed = {}
     for word, idols in raw_data.items():
         total_count = sum(idols.values())
@@ -22,8 +32,7 @@ def load_and_process_data():
         if total_count < 20:
             continue
 
-        # 件数ではなく「全体の何％か」を計算（小数第1位で四捨五入）
-        # 全体の割合を表示するため、各アイドルの件数 / 全体件数 * 100
+        # 各アイドルの占有率（％）を計算（小数第1位で四捨五入）
         processed[word] = []
         for name, count in idols.items():
             percent = round((count / total_count) * 100, 1) if total_count > 0 else 0
@@ -130,7 +139,6 @@ def index():
     if not keywords:
         return render_template_string(HTML_TEMPLATE, keywords=[], current_word="", data=[], error="有効なデータが見つかりませんでした。data.jsonを確認してください。")
 
-    # 初期選択ワード（指定がなければ先頭のワード）
     current_word = request.args.get("word", keywords[0])
     
     if current_word not in DATA_STORE:
