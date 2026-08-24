@@ -1,12 +1,10 @@
 from flask import Flask, render_template_string, request
-import requests
+from serpapi import GoogleSearch
 import os
 
 app = Flask(__name__)
 
-# Google Custom Search APIのキーとCX（環境変数から取得）
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-SEARCH_ENGINE_ID = os.environ.get("SEARCH_ENGINE_ID", "")
+SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
 
 IDOLS = [
     "花海 咲季", "月村 手毬", "藤田 ことね", "姫崎 莉波", "紫雲 清夏", "篠澤 広",
@@ -76,13 +74,19 @@ HTML_TEMPLATE = """
 """
 
 def get_real_search_count(query):
-    if not GOOGLE_API_KEY or not SEARCH_ENGINE_ID:
+    if not SERPAPI_KEY:
         return 0
-    url = f"https://www.googleapis.com/customsearch/v1?key={GOOGLE_API_KEY}&cx={SEARCH_ENGINE_ID}&q={query}"
     try:
-        res = requests.get(url).json()
-        total_results = res.get("searchInformation", {}).get("totalResults", "0")
-        return int(total_results)
+        params = {
+            "q": query,
+            "hl": "ja",
+            "gl": "jp",
+            "safe": "off", # セーフサーチOFF
+            "api_key": SERPAPI_KEY
+        }
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        return results.get("search_information", {}).get("total_results", 0)
     except Exception:
         return 0
 
@@ -91,8 +95,8 @@ def index():
     word = request.args.get("word", "かわいい")
     error = None
     
-    if not GOOGLE_API_KEY or not SEARCH_ENGINE_ID:
-        error = "Google APIの設定がまだ完了していません。"
+    if not SERPAPI_KEY:
+        error = "SerpApiの設定が完了していません。"
         raw_data = [{"name": name, "count": 0} for name in IDOLS]
     else:
         raw_data = []
