@@ -1,16 +1,44 @@
 from flask import Flask, render_template_string, request
-import asyncio
-import aiohttp
+import json
 import os
 
 app = Flask(__name__)
 
-SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
+# 保存されたJSONファイルの読み込み
+JSON_PATH = os.path.join(os.path.dirname(__file__), "data.json")
 
-IDOLS = [
-    "花海 咲季", "月村 手毬", "藤田 ことね", "姫崎 莉波", "紫雲 清夏", "篠澤 広",
-    "葛城 リーリヤ", "倉本 千奈", "有村 麻央", "十王 星南", "花海 佑芽"
-]
+def load_and_process_data():
+    if not os.path.exists(JSON_PATH):
+        return {}
+
+    with open(JSON_PATH, "r", encoding="utf-8") as f:
+        raw_data = json.load(f)
+
+    processed = {}
+    for word, idols in raw_data.items():
+        total_count = sum(idols.values())
+        
+        # 検索結果総数が少ない（合計20件未満）ものは排除
+        if total_count < 20:
+            continue
+
+        # 件数ではなく「全体の何％か」を計算（小数第1位で四捨五入）
+        # 全体の割合を表示するため、各アイドルの件数 / 全体件数 * 100
+        processed[word] = []
+        for name, count in idols.items():
+            percent = round((count / total_count) * 100, 1) if total_count > 0 else 0
+            processed[word].append({
+                "name": name,
+                "percent": percent
+            })
+        
+        # 割合が高い順にソート
+        processed[word].sort(key=lambda x: x["percent"], reverse=True)
+
+    return processed
+
+# データロード
+DATA_STORE = load_and_process_data()
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -25,12 +53,12 @@ HTML_TEMPLATE = """
         h1 { font-size: 20px; font-weight: bold; margin-bottom: 4px; }
         .caption { font-size: 12px; color: #64748b; margin-bottom: 20px; }
         .search-box { margin-bottom: 20px; }
-        input[type="text"] { width: 100%; padding: 12px; font-size: 16px; border: 2px solid #0284c7; border-radius: 8px; box-sizing: border-box; }
+        select { width: 100%; padding: 12px; font-size: 16px; border: 2px solid #0284c7; border-radius: 8px; box-sizing: border-box; background-color: #fff; cursor: pointer; }
         .top3-container { display: flex; gap: 8px; margin-bottom: 24px; }
         .card { flex: 1; background: #ffffff; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .card-label { font-size: 11px; color: #475569; font-weight: bold; }
         .card-value { font-size: 15px; font-weight: bold; margin: 4px 0; }
-        .card-sub { font-size: 11px; color: #0284c7; }
+        .card-sub { font-size: 12px; color: #0284c7; font-weight: bold; }
         .bar-container { display: flex; flex-direction: column; gap: 12px; }
         .bar-row { display: flex; flex-direction: column; gap: 4px; }
         .bar-label { display: flex; justify-content: space-between; font-size: 13px; font-weight: bold; }
@@ -42,11 +70,15 @@ HTML_TEMPLATE = """
 <body>
     <div class="container">
         <h1>学園アイドルマスター 検索印象属性分析</h1>
-        <div class="caption">Googleのリアルタイム検索ヒット数を集計中</div>
+        <div class="caption">二次創作検索ワードにおけるアイドル別占有率</div>
         
         <form class="search-box" method="GET" action="/">
-            <label style="font-size: 13px; font-weight: bold; display: block; margin-bottom: 6px;">掛け合わせ検索ワードを入力</label>
-            <input type="text" name="word" value="{{ word }}" onchange="this.form.submit()">
+            <label style="font-size: 13px; font-weight: bold; display: block; margin-bottom: 6px;">掛け合わせ検索ワードを選択</label>
+            <select name="word" onchange="this.form.submit()">
+                {% for w in keywords %}
+                <option value="{{ w }}" {% if w == current_word %}selected{% endif %}>{{ w }}</option>
+                {% endfor %}
+            </select>
         </form>
 
         {% if error %}
@@ -55,16 +87,33 @@ HTML_TEMPLATE = """
 
         {% if data %}
         <div class="top3-container">
-            <div class="card"><div class="card-label">1位 ({{ word }})</div><div class="card-value">{{ data[0].name }}</div><div class="card-sub">{{ "{:,}".format(data[0].count) }} 件</div></div>
-            <div class="card"><div class="card-label">2位</div><div class="card-value">{{ data[1].name }}</div><div class="card-sub">{{ "{:,}".format(data[1].count) }} 件</div></div>
-            <div class="card"><div class="card-label">3位</div><div class="card-value">{{ data[2].name }}</div><div class="card-sub">{{ "{:,}".format(data[2].count) }} 件</div></div>
+            <div class="card">
+                <div class="card-label">1位</div>
+                <div class="card-value">{{ data[0].name }}</div>
+                <div class="card-sub">{{ data[0].percent }} %</div>
+            </div>
+            <div class="card">
+                <div class="card-label">2位</div>
+                <div class="card-value">{{ data[1].name }}</div>
+                <div class="card-sub">{{ data[1].percent }} %</div>
+            </div>
+            <div class="card">
+                <div class="card-label">3位</div>
+                <div class="card-value">{{ data[2].name }}</div>
+                <div class="card-sub">{{ data[2].percent }} %</div>
+            </div>
         </div>
 
         <div class="bar-container">
             {% for item in data %}
             <div class="bar-row">
-                <div class="bar-label"><span>{{ item.name }}</span><span>{{ "{:,}".format(item.count) }} 件</span></div>
-                <div class="bar-bg"><div class="bar-fill" style="width: {{ item.percent }}%;"></div></div>
+                <div class="bar-label">
+                    <span>{{ item.name }}</span>
+                    <span>{{ item.percent }} %</span>
+                </div>
+                <div class="bar-bg">
+                    <div class="bar-fill" style="width: {{ item.percent }}%;"></div>
+                </div>
             </div>
             {% endfor %}
         </div>
@@ -74,47 +123,28 @@ HTML_TEMPLATE = """
 </html>
 """
 
-async def fetch_count(session, name, word):
-    url = "https://serpapi.com/search.json"
-    params = {
-        "q": f'"{name}" "{word}"',
-        "hl": "ja",
-        "gl": "jp",
-        "safe": "off",
-        "api_key": SERPAPI_KEY
-    }
-    try:
-        async with session.get(url, params=params) as resp:
-            data = await resp.json()
-            count = data.get("search_information", {}).get("total_results", 0)
-            return {"name": name, "count": count}
-    except Exception:
-        return {"name": name, "count": 0}
-
-async def fetch_all(word):
-    async with aiohttp.ClientSession() as session:
-        tasks = [fetch_count(session, name, word) for name in IDOLS]
-        return await asyncio.gather(*tasks)
-
 @app.route("/")
 def index():
-    word = request.args.get("word", "かわいい")
-    error = None
+    keywords = list(DATA_STORE.keys())
     
-    if not SERPAPI_KEY:
-        error = "SerpApiの設定が完了していません。"
-        raw_data = [{"name": name, "count": 0} for name in IDOLS]
-    else:
-        # 並列処理で一括取得
-        raw_data = asyncio.run(fetch_all(word))
+    if not keywords:
+        return render_template_string(HTML_TEMPLATE, keywords=[], current_word="", data=[], error="有効なデータが見つかりませんでした。data.jsonを確認してください。")
 
-    sorted_data = sorted(raw_data, key=lambda x: x["count"], reverse=True)
-    max_count = sorted_data[0]["count"] if sorted_data and sorted_data[0]["count"] > 0 else 1
+    # 初期選択ワード（指定がなければ先頭のワード）
+    current_word = request.args.get("word", keywords[0])
     
-    for item in sorted_data:
-        item["percent"] = int((item["count"] / max_count) * 100) if max_count > 0 else 0
-        
-    return render_template_string(HTML_TEMPLATE, word=word, data=sorted_data, error=error)
+    if current_word not in DATA_STORE:
+        current_word = keywords[0]
+
+    data = DATA_STORE.get(current_word, [])
+    
+    return render_template_string(
+        HTML_TEMPLATE, 
+        keywords=keywords, 
+        current_word=current_word, 
+        data=data, 
+        error=None
+    )
 
 if __name__ == "__main__":
-    app.run()
+    app.run(debug=True)
