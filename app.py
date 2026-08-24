@@ -1,5 +1,6 @@
 from flask import Flask, render_template_string, request
-from serpapi import GoogleSearch
+import asyncio
+import aiohttp
 import os
 
 app = Flask(__name__)
@@ -73,22 +74,27 @@ HTML_TEMPLATE = """
 </html>
 """
 
-def get_real_search_count(query):
-    if not SERPAPI_KEY:
-        return 0
+async def fetch_count(session, name, word):
+    url = "https://serpapi.com/search.json"
+    params = {
+        "q": f'"{name}" "{word}"',
+        "hl": "ja",
+        "gl": "jp",
+        "safe": "off",
+        "api_key": SERPAPI_KEY
+    }
     try:
-        params = {
-            "q": query,
-            "hl": "ja",
-            "gl": "jp",
-            "safe": "off", # セーフサーチOFF
-            "api_key": SERPAPI_KEY
-        }
-        search = GoogleSearch(params)
-        results = search.get_dict()
-        return results.get("search_information", {}).get("total_results", 0)
+        async with session.get(url, params=params) as resp:
+            data = await resp.json()
+            count = data.get("search_information", {}).get("total_results", 0)
+            return {"name": name, "count": count}
     except Exception:
-        return 0
+        return {"name": name, "count": 0}
+
+async def fetch_all(word):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_count(session, name, word) for name in IDOLS]
+        return await asyncio.gather(*tasks)
 
 @app.route("/")
 def index():
@@ -99,11 +105,8 @@ def index():
         error = "SerpApiの設定が完了していません。"
         raw_data = [{"name": name, "count": 0} for name in IDOLS]
     else:
-        raw_data = []
-        for name in IDOLS:
-            query = f'"{name}" "{word}"'
-            count = get_real_search_count(query)
-            raw_data.append({"name": name, "count": count})
+        # 並列処理で一括取得
+        raw_data = asyncio.run(fetch_all(word))
 
     sorted_data = sorted(raw_data, key=lambda x: x["count"], reverse=True)
     max_count = sorted_data[0]["count"] if sorted_data and sorted_data[0]["count"] > 0 else 1
